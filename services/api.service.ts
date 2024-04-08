@@ -63,7 +63,7 @@ const ApiService: ServiceSchema<ApiSettingsSchema> = {
         logging: true
       },
       {
-      	path: "/",
+      	path: "/users",
 	authorization: true,
 	autoAliases: true,
 	bodyParsers: {

@@ -26,7 +26,8 @@ interface UsersSettings extends ServiceSettingSchema {
 }
 
 interface UsersMethods {
-
+    generateJwt: (user: IUser) => string;
+    transformEntity: (user: IUser, withToken: boolean, token?: string | null | undefined) => { user: IUser | IUser & { token: string } };
 }
 
 interface UsersLocalVars {
@@ -45,7 +46,7 @@ const UsersService: ServiceSchema<UsersSettings> & { methods: UsersMethods } = {
   },
   actions: {
     create: {
-      rest: "POST /users",
+      rest: "POST /",
       handler (this: UsersThis, ctx: Context<ActionCreateParams, Meta>) {
         return new this.Promise<object>((resolve, reject) => {
 		const doc = this.adapter.insert(ctx.params.user);
@@ -55,7 +56,7 @@ const UsersService: ServiceSchema<UsersSettings> & { methods: UsersMethods } = {
     },
 
     login: {
-    	rest: "POST /users/login",
+    	rest: "POST /login",
 	async handler(this: UsersThis, ctx: Context<ActionLoginParams, Meta>) {
 		const { email, password } = ctx.params;
 		const user = await this.adapter.findOne({ email });
@@ -91,6 +92,22 @@ const UsersService: ServiceSchema<UsersSettings> & { methods: UsersMethods } = {
 		    }
 	    }
     },
+
+    me: {
+    	auth: "required",
+	rest: "GET /me",
+	cache: {
+		keys: ["#userID"]
+	},
+	async handler(this: UsersThis, ctx: Context<null, Meta>) {
+		const user = await this.getById(ctx.meta.user?._id);
+		if (!user) {
+			throw new Errors.MoleculerClientError("User not found!", 400);
+		}
+		const doc = await this.transformDocuments(ctx, {}, user);
+		return await this.transformEntity(doc, true, ctx.meta.user?.token);
+	}
+    }
   },
   methods: {
     generateJwt(user: IUser) {
@@ -105,17 +122,16 @@ const UsersService: ServiceSchema<UsersSettings> & { methods: UsersMethods } = {
 	    }, this.settings.JWT_SECRET);
     },
 
-    transformEntity(dbuser: IUser, withToken: boolean, token: string) {
-	    const user: IUser & { token: string } = {...dbuser, token: ""};
-	    if (dbuser) {
-	    	user.image = dbuser.image || "";
-		if (withToken) {
-			user.token = token || this.generateJwt(user);
+    transformEntity(user: IUser, withToken: boolean, token?: string | null | undefined) {
+	    if (user) {
+	    	user.image = user.image || "";
+		if (withToken && token) {
+	    		const userWithToken: IUser & { token: string } = {...user, token: ""};
+			userWithToken.token = token || this.generateJwt(user);
+			return { user: userWithToken };
 		}
 	    }
 	    return { user };
-    },
-    async transformProfile(ctx: Context, user: IUser, loggedInUser?: IUser) {
     },
   },
 }

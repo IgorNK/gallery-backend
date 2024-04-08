@@ -1,7 +1,7 @@
 interface Meta {
 	filename?: string | null | undefined;
 	user?: {
-		userID?: string | null | undefined;
+		_id?: string | null | undefined;
 		token?: string | null | undefined;
 	} | null | undefined;
 }
