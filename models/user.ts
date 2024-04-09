@@ -1,14 +1,17 @@
 export interface IUser {
-	_id: string;
 	username: string;
 	password: string;
 	email: string;
-	image?: string;
+	image?: string | undefined | null;
+	bio?: string | undefined | null;
+	createdAt: Date;
 };
 
 export const UserValidator = {
-	username: "string|min:3",
-	password: "string|min:6",
-	email: "string|min:4",
+	username: "string|min:3|unique",
+	password: "string|min:3",
+	email: "email|min:3|unique",
+	image: "string|optional",
+	bio: "string|optional",
 };
 

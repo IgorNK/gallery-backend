@@ -21,6 +21,8 @@
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/jsonwebtoken": "^9.0.6",
+    "@types/sanitize-html": "^2.11.0",
+    "@types/slug": "^5.0.8",
     "eslint": "^8.25.0",
     "jest": "^27.5.1",
     "jest-cli": "^27.5.1",
@@ -36,10 +38,11 @@
     "moleculer": "^0.14.26",
     "moleculer-db": "^0.8.20",
     "moleculer-db-adapter-mongo": "^0.4.19",
-    "moleculer-db-adapter-mongoose": "^0.9.4",
     "moleculer-web": "^0.10.4",
     "mongoose": "^8.3.0",
-    "nats": "^2.7.1"
+    "nats": "^2.7.1",
+    "sanitize-html": "^2.13.0",
+    "slug": "^9.0.0"
   },
   "engines": {
     "node": ">= 16.x.x"

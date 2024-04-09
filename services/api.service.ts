@@ -64,25 +64,68 @@ const ApiService: ServiceSchema<ApiSettingsSchema> = {
       },
       {
       	path: "/users",
+	authentication: true,
 	authorization: true,
-	autoAliases: true,
+	aliases: {
+		'GET /': 'users.list',
+		'POST /': 'users.create',
+		'GET /:id': 'users.get',
+		'POST /login': 'users.login',
+		'GET /me': 'users.me'
+	},
+        whitelist: ['**'],
+	mappingPolicy: 'restrict',
 	bodyParsers: {
-		json: {
-			strict: false
-		},
+		json: true,
 		urlencoded: {
 			extended: false
 		}
 	}
+      },
+      {
+      	path: "/galleries",
+	authentication: true,
+	authorization: true,
+	aliases: {
+		'GET /': 'galleries.list',
+		'POST /': 'galleries.create',
+		'GET /:id': 'galleries.get'
+	},
+	whitelist: ['**'],
+	mappingPolicy: 'restrict',
+	bodyParsers: {
+		json: true,
+		urlencoded: {
+			extended: false
+		}
+	},
+      },
+      {
+      	path: "/stories",
+	authentication: true,
+	authorization: true,
+	aliases: {
+		'GET /': 'stories.list',
+		'POST /': 'stories.create',
+		'GET /:id': 'stories.get'
+	},
+	whitelist: ['**'],
+	mappingPolicy: 'restrict',
+	bodyParsers: {
+		json: true,
+		urlencoded: {
+			extended: false
+		}
+	},
       },
     ],
 
     // Do not log client side errors (does not log an error response when the error.code is 400<=X<500)
     log4XXResponses: false,
     // Logging the request parameters. Set to any log level to enable it. E.g. "info"
-    logRequestParams: null,
+    logRequestParams: "info",
     // Logging the response data. Set to any log level to enable it. E.g. "info"
-    logResponseData: null
+    logResponseData: "info"
   },
 
   methods: {
@@ -98,13 +141,13 @@ const ApiService: ServiceSchema<ApiSettingsSchema> = {
 				token = req.headers.authorization.split(" ")[1];
 			}
 		  }
-		  let user: IUser;
+		  let user: IUser & { _id: string };
 		  if (token) {
 		  	try {
 				user = await ctx.call("users.resolveToken", { token });
 				if (user) {
 					this.logger.info("Authenticated via JWT: ", user.username);
-					return { userID: user._id, token };
+					return { _id: user._id, token };
 				}
 			} catch (err) {
 

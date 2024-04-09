@@ -7,7 +7,9 @@ import DbService from '../mixins/db.mixin';
 import { UserValidator, type IUser } from "../models/user";
 
 export interface ActionCreateParams {
-  user: IUser,
+  	username: string,
+	email: string,
+	password: string,
 }
 
 export interface ActionLoginParams {
@@ -20,13 +22,12 @@ export interface ActionResolveTokenParams {
 }
 
 interface UsersSettings extends ServiceSettingSchema {
-	rest: string,
 	JWT_SECRET: string,
 	fields: string[],
 }
 
 interface UsersMethods {
-    generateJwt: (user: IUser) => string;
+    generateJwt: (user: IUser & { _id: string }) => string;
     transformEntity: (user: IUser, withToken: boolean, token?: string | null | undefined) => { user: IUser | IUser & { token: string } };
 }
 
@@ -39,33 +40,56 @@ const UsersService: ServiceSchema<UsersSettings> & { methods: UsersMethods } = {
   name: 'users',
   mixins: [DbService("users")],
   settings: {
-	  rest: "/",
 	  JWT_SECRET: process.env.JWT_SECRET || "jwt-secret",
-	  fields: ["_id", "username", "password", "email", "image"],
+	  fields: ["_id", "username", "email", "image", "bio", "createdAt"],
 	  entityValidator: UserValidator,
   },
   actions: {
     create: {
-      rest: "POST /",
-      handler (this: UsersThis, ctx: Context<ActionCreateParams, Meta>) {
-        return new this.Promise<object>((resolve, reject) => {
-		const doc = this.adapter.insert(ctx.params.user);
-		this.logger.info(doc);
-        })
+      async handler (this: UsersThis, ctx: Context<ActionCreateParams, Meta>) {
+	await this.validateEntity(ctx.params);
+	let entity: IUser = {
+		...ctx.params,
+		createdAt: new Date(),
+		password: bcrypt.hashSync(ctx.params.password, 10),
+		image: null,
+		bio: null,
+	};
+	if (entity.username) {
+		const found = await this.adapter.findOne({ username: entity.username });
+		if (found) {
+			throw new Errors.MoleculerClientError("Username already taken!", 422, "", [{ field: "username", message: "already exists" }]);
+		}
+	}
+	if (entity.email) {
+		const found = await this.adapter.findOne({ email: entity.email });
+		if (found) {
+			throw new Errors.MoleculerClientError("Email already exists!", 422, "", [{ field: "email", message: "already exists" }]);
+		}
+	}
+
+	const doc = await this.adapter.insert(entity);
+	const user = await this.transformDocuments(ctx, {}, doc);
+	const json = await this.transformEntity(user, true, ctx.meta.user?.token);
+	await this.entityChanged("created", json, ctx);
+	return json;
       }
     },
 
     login: {
-    	rest: "POST /login",
+	params: {
+		email: { type: "email" },
+		password: { type: "string", min: 3 },
+	},
 	async handler(this: UsersThis, ctx: Context<ActionLoginParams, Meta>) {
 		const { email, password } = ctx.params;
 		const user = await this.adapter.findOne({ email });
 		if (!user) {
-			throw new Errors.MoleculerClientError("Email or password is invalid!", 422, "", [{ field: "email", message: "is not found" }]);
+			throw new Errors.MoleculerClientError("Email or password is invalid!", 422, "", [{ field: "email", message: "is not found" }, { field: "password", message: "is incorrect" }]);
 		}
 		const res = await bcrypt.compare(password, user.password);
 		if (!res) {
-			throw new Errors.MoleculerClientError("Wrong password!", 422, "", [{ field: "email", message: "is not found" }]);
+			throw new Errors.MoleculerClientError("Email or password is invalid!", 422, "", [{ field: "email", message: "is not found" }, { field: "password", message: "is incorrect" }]);
 		}
 		const doc = await this.transformDocuments(ctx, {}, user);
 		return await this.transformEntity(doc, true, ctx.meta.user?.token);
@@ -95,7 +119,6 @@ const UsersService: ServiceSchema<UsersSettings> & { methods: UsersMethods } = {
 
     me: {
     	auth: "required",
-	rest: "GET /me",
 	cache: {
 		keys: ["#userID"]
 	},
@@ -110,7 +133,7 @@ const UsersService: ServiceSchema<UsersSettings> & { methods: UsersMethods } = {
     }
   },
   methods: {
-    generateJwt(user: IUser) {
+    generateJwt(user: IUser & { _id: string }) {
 	    const today = new Date();
 	    const exp = new Date(today);
 	    exp.setDate(today.getDate() + 60);
@@ -125,7 +148,7 @@ const UsersService: ServiceSchema<UsersSettings> & { methods: UsersMethods } = {
     transformEntity(user: IUser, withToken: boolean, token?: string | null | undefined) {
 	    if (user) {
 	    	user.image = user.image || "";
-		if (withToken && token) {
+		if (withToken) {
 	    		const userWithToken: IUser & { token: string } = {...user, token: ""};
 			userWithToken.token = token || this.generateJwt(user);
 			return { user: userWithToken };
