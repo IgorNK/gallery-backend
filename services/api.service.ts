@@ -17,10 +17,17 @@ const ApiService: ServiceSchema<ApiSettingsSchema> = {
       allowedHeaders: ['Content-Type']
     },
     routes: [
+      //{
+	//path: '/',
+	//authorization: true,
+	//authentication: true,
+	//autoAliases: true,
+      //},
       {
         path: '/upload',
 
 	authorization: true,
+	authentication: true,
 
         whitelist: ['**'],
 
@@ -89,7 +96,9 @@ const ApiService: ServiceSchema<ApiSettingsSchema> = {
 	aliases: {
 		'GET /': 'galleries.list',
 		'POST /': 'galleries.create',
-		'GET /:id': 'galleries.get'
+		'GET /:id': 'galleries.get',
+		'PATCH /:id': 'galleries.update',
+		'DELETE /:id': 'galleries.delete',
 	},
 	whitelist: ['**'],
 	mappingPolicy: 'restrict',
@@ -107,7 +116,9 @@ const ApiService: ServiceSchema<ApiSettingsSchema> = {
 	aliases: {
 		'GET /': 'stories.list',
 		'POST /': 'stories.create',
-		'GET /:id': 'stories.get'
+		'GET /:id': 'stories.get',
+		'PATCH /:id': 'stories.update',
+		'DELETE /:id': 'stories.delete',
 	},
 	whitelist: ['**'],
 	mappingPolicy: 'restrict',

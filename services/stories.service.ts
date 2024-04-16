@@ -30,10 +30,19 @@ export interface ActionUpdateParams {
 }
 
 export interface ActionListParams {
+	id?: string | string[],
 	tag?: string,
 	author?: string,
 	limit?: number,
 	offset?: number,
+}
+
+export interface ActionGetParams {
+	id: string | string[],
+}
+
+export interface ActionDeleteParams {
+	id: string,
 }
 
 interface StoriesSettings extends ServiceSettingSchema {
@@ -65,10 +74,12 @@ const StoriesService: ServiceSchema<StoriesSettings> & { methods: StoriesMethods
 	actions: {
 		create: {
 			auth: "required",
+			rest: "POST /",
 			async handler(
 				this: StoriesThis,
 				ctx: Context<ActionCreateParams, Meta>
 			) {
+				this.logger.info(ctx.meta);
 				const id = ctx.meta.user?._id;
 				if (!id) {
 					this.logger.info("couldn't find user id");
@@ -122,11 +133,15 @@ const StoriesService: ServiceSchema<StoriesSettings> & { methods: StoriesMethods
 				this: StoriesThis,
 				ctx: Context<ActionUpdateParams, Meta>
 			) {
+				await this.validateEntity(ctx.params.story);
 				let newData = {
 					...ctx.params.story,
 					updatedAt: new Date(),
 				};
-				const story = await this.findBySlug(ctx.params.id);
+				let story = await this.findBySlug(ctx.params.id);
+				if (!story) {
+					story = await this.adapter.findById(ctx.params.id);
+				}
 				if (!story) {
 					throw new Errors.MoleculerClientError("Story not found", 404);
 				}
@@ -147,15 +162,80 @@ const StoriesService: ServiceSchema<StoriesSettings> & { methods: StoriesMethods
 				return json;
 			},
 		},
+		delete: {
+			auth: "required",
+			async handler (
+				this: StoriesThis,
+				ctx: Context<ActionDeleteParams, Meta>
+			) {
+				let entity = await this.findBySlug(ctx.params.id);
+				if (!entity) {
+					entity = await this.adapter.findById(ctx.params.id);
+				}
+				if (!entity) {
+					throw new Errors.MoleculerClientError("Story not found!", 404);
+				}
+				if (entity.author !== ctx.meta.user?._id) {
+					throw new ApiGateway.Errors.ForbiddenError("Forbidden!", 403);
+				}
+				const res = await this.adapter.removeById(entity._id);
+				await this.entityChanged("removed", res, ctx);
+				return res;
+			}
+		},
+		get: {
+			cache: {
+				keys: ["#userID", "id"],
+			},
+			rest: "GET /:id",
+			populate: ["author"],
+			async handler(
+				this: StoriesThis,
+				ctx: Context<ActionGetParams, Meta>
+			) {
+				this.logger.info("STORIES PARAMS:");
+				this.logger.info(ctx.params);
+				if (Array.isArray(ctx.params.id)) {
+					return await this.adapter.findByIds(ctx.params.id);
+				} else {
+					return await this.adapter.findById(ctx.params.id);
+				}
+			},
+			//async handler(
+			//	this: StoriesThis,
+			//	ctx: Context<ActionGetParams, Meta>
+			//) {
+			//	this.logger.info(ctx.params.id);
+			//	let id: string[];
+			//	if (Array.isArray(ctx.params.id)) {
+			//		id = ctx.params.id;
+			//	} else {
+			//		id = [ctx.params.id]
+			//	}
+			//	
+			//	let doc: string | string[];
+			  //      doc = await Promise.all(id.map(async (id: string) => {
+			//		this.logger.info(id);
+			//		let res = await this.findBySlug(id);
+			//		if (!res) {
+			//			res = await this.adapter.findById(id);
+			//		}
+			//		if (!res) {
+			//			throw new Errors.MoleculerClientError(`Story ${id} not found!`, 404);
+			//		}
+			//		return res;
+			//	}));
+			//	if (doc.length < 2) {
+			//		doc = doc[0];
+			//	}
+//
+//				let json = await this.transformDocuments(ctx, { populate: ["author"] }, doc);
+//				return json;
+//			}
+		},
 		list: {
 			cache: {
-				keys: ["#userID", "tag", "author", "limit", "offset"],
-			},
-			params: {
-				tag: { type: "string", optional: true },
-				author: { type: "string", optional: true },
-				limit: { type: "number", optional: true, convert: true },
-				offset: { type: "number", optional: true, convert: true },
+				keys: ["#userID", "_id", "tag", "author", "limit", "offset"],
 			},
 			async handler(
 				this: StoriesThis,
@@ -170,6 +250,7 @@ const StoriesService: ServiceSchema<StoriesSettings> & { methods: StoriesMethods
 					sort: string[],
 					populate: string[],
 					query: {
+						_id?: Object,
 						tagList?: Object,
 						author?: string,
 					}
@@ -180,6 +261,11 @@ const StoriesService: ServiceSchema<StoriesSettings> & { methods: StoriesMethods
 					populate: ["author"],
 					query: {},
 				};
+				
+				if (ctx.params.id) {
+					const id = Array.isArray(ctx.params.id) ? ctx.params.id : ctx.params.id.split(",");
+					params.query._id = { "$in": id};
+				}
 
 				if (ctx.params.tag) {
 					params.query.tagList = { "$in" : [ctx.params.tag] };
@@ -194,6 +280,7 @@ const StoriesService: ServiceSchema<StoriesSettings> & { methods: StoriesMethods
 					}
 					params.query.author = users[0]._id;
 				}
+
 
 				const countParams = {...params};
 				if (countParams && countParams.limit) {
@@ -217,7 +304,7 @@ const StoriesService: ServiceSchema<StoriesSettings> & { methods: StoriesMethods
 	},
 	methods: {
 		findBySlug(this: StoriesThis, slug: string) {
-                        return this.adapger.findOne({ slug });
+                        return this.adapter.findOne({ slug });
                 },
 
                 async transformResult(

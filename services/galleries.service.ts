@@ -1,15 +1,46 @@
 import type { ServiceSchema, ServiceSettingSchema, Service, Context } from 'moleculer';
 import { Errors } from 'moleculer';
+import ApiGateway from 'moleculer-web';
 import type { Meta } from '../types';
 import DbService from '../mixins/db.mixin';
 import { GalleryValidator, type IGallery } from '../models/gallery';
 import { type IUser } from '../models/user';
+import { type IStory } from '../models/story';
 import slug from 'slug';
 
 export interface ActionCreateParams {
-	title: string,
-	subtitle: string,
-	cover?: string,
+	gallery: {
+		title: string,
+		subtitle: string,
+		cover?: string,
+	}
+}
+
+export interface ActionGetParams {
+	id: string
+}
+
+export interface ActionListParams {
+	tag?: string,
+	author?: string,
+	story?: string,
+	limit?: number,
+	offset?: number,
+}
+
+export interface ActionUpdateParams {
+	id: string,
+	gallery: {
+		title?: string,
+		tagList: string[],
+		subtitle?: string,
+		cover?: string,
+		stories?: string[],
+	}
+}
+
+export interface ActionDeleteParams {
+	id: string
 }
 
 interface GalleriesSettings extends ServiceSettingSchema {
@@ -34,14 +65,14 @@ const GalleriesService: ServiceSchema<GalleriesSettings> & { methods: GalleriesM
 			author: {
 				action: "users.get",
 				params: {
-					fields: ["username", "bio", "image"]
+					fields: ["_id", "username", "bio", "image"]
 				}
 			},
 			stories: {
 				action: "stories.get",
 				params: {
 					fields: ["_id", "cover", "info", "title", "slug", "author"],
-					populates: ["author"]
+					populate: ["author"]
 				}
 			}
 		},
@@ -59,15 +90,16 @@ const GalleriesService: ServiceSchema<GalleriesSettings> & { methods: GalleriesM
 					this.logger.info("Couldn't find user id");
 					throw new Errors.MoleculerServerError("Couldn't find user id", 501, "", {});
 				}
-				await this.validateEntity(ctx.params);
+				await this.validateEntity(ctx.params.gallery);
 				let entity: IGallery = {
-					...ctx.params,
+					...ctx.params.gallery,
+					tagList: [],
 					createdAt: new Date(),
 					updatedAt: new Date(),
-					slug: slug(ctx.params.title, { lower: true}) + "-" + (Math.random() * Math.pow(36, 6) | 0).toString(36),
+					slug: slug(ctx.params.gallery.title, { lower: true}) + "-" + (Math.random() * Math.pow(36, 6) | 0).toString(36),
 					stories: [],
 					author: id,
-					cover: ctx.params.cover || "",
+					cover: ctx.params.gallery.cover || "",
 				};
 
 				const doc = await this.adapter.insert(entity);
@@ -77,10 +109,162 @@ const GalleriesService: ServiceSchema<GalleriesSettings> & { methods: GalleriesM
 				return json;
 			}
 		},
+		get: {
+			cache: {
+				keys: ["#userID", "id"]
+			},
+			async handler(
+				this: GalleriesThis,
+				ctx: Context<ActionGetParams, Meta>
+			) {
+				let doc = await this.findBySlug(ctx.params.id);
+				if (!doc) {
+					doc = await this.adapter.findById(ctx.params.id);
+				}
+				if (!doc) {
+					throw new Errors.MoleculerClientError("Gallery not found!", 404);
+				}
+				if (doc.stories.length) {
+					const res = await this.broker.call("stories.get", { id: doc.stories[0] });
+					this.logger.info("RESPONSE:");
+					this.logger.info(res);
+
+				}
+				let json = await this.transformDocuments(ctx, { populate: ["author", "stories"] }, doc);
+				return json;
+			}
+		},
+		list: {
+			cache: {
+				keys: ["#userID", "tag", "author", "story", "limit", "offset"]
+			},
+			async handler(
+				this: GalleriesThis,
+				ctx: Context<ActionListParams, Meta>
+			) {
+				const limit = ctx.params.limit ? Number(ctx.params.limit) : 20;
+				const offset = ctx.params.offset ? Number(ctx.params.offset) : 0;
+				
+				let params: {
+					limit: Number | null,
+					offset: Number | null,
+					sort: string[],
+					populate: string[],
+					query: {
+						tagList?: Object,
+						author?: string,
+						story?: string,
+					}
+				} = {
+					limit,
+					offset,
+					sort: ["-createdAt"],
+					populate: ["author", "stories"],
+					query: {}
+				};
+
+				if (ctx.params.tag) {
+					params.query.tagList = { "$in": [ctx.params.tag] };
+				}
+
+				if (ctx.params.author) {
+					const users: Array<IUser & { _id: string }> = await ctx.call("users.find", {
+						query: { username: ctx.params.author }
+					});
+					if (users.length == 0) {
+						throw new Errors.MoleculerClientError("Author not found");
+					}
+					params.query.author = users[0]._id;
+				}
+				if (ctx.params.story) {
+					const stories: Array<IStory & { _id: string }> = await ctx.call("stories.find", {
+						query: { title: ctx.params.story }
+					});
+					if (stories.length == 0) {
+						throw new Errors.MoleculerClientError("Story not found");
+					}
+					params.query.story = stories[0]._id;
+				}
+				const countParams = {...params};
+				if (countParams && countParams.limit) {
+					countParams.limit = null;
+				}
+				if (countParams && countParams.offset) {
+					countParams.offset = null;
+				}
+
+				const res = await Promise.all([
+					this.adapter.find(params),
+					this.adapter.count(countParams)
+				]);
+
+				const docs = await this.transformDocuments(ctx, params, res[0]);
+				const r = await this.transformResult(ctx, docs, ctx.meta.user);
+				r.articlesCount = res[1];
+				return r;
+			}
+		},
+		update: {
+			auth: "required",
+			async handler(
+				this: GalleriesThis,
+				ctx: Context<ActionUpdateParams, Meta>
+			) {
+				let gallery = await this.findBySlug(ctx.params.id);
+				if (!gallery) {
+					gallery = await this.adapter.findById(ctx.params.id);
+				}
+				if (!gallery) {
+					throw new Errors.MoleculerClientError("Gallery not found!", 404);
+				}
+				if (gallery.author !== ctx.meta.user?._id) {
+					throw new ApiGateway.Errors.ForbiddenError("Forbidden!", 403);
+				}
+				let newData: IGallery = {
+					...gallery,
+					...ctx.params.gallery,
+					updatedAt: new Date(),
+				};
+				await this.validateEntity(newData);
+				const update = {
+					"$set": newData
+				};
+				const doc = await this.adapter.updateById(gallery._id, update);
+				this.logger.info(doc);
+				const entity = await this.transformDocuments(ctx, { populate: ["author", "stories"] }, doc);
+				this.logger.info(entity);
+				const json = await this.transformResult(ctx, entity, ctx.meta.user);
+				this.entityChanged("updated", json, ctx);
+				return json;
+						
+			}
+		},
+		delete: {
+			auth: "required",
+			async handler (
+				this: GalleriesThis,
+				ctx: Context<ActionDeleteParams, Meta>
+			) {
+				let entity = await this.findBySlug(ctx.params.id);
+				if (!entity) {
+					entity = await this.adapter.findById(ctx.params.id);
+				}
+				if (!entity) {
+					throw new Errors.MoleculerClientError("Gallery not found!", 404);
+				}
+				if (entity.author !== ctx.meta.user?._id) {
+					throw new ApiGateway.Errors.ForbiddenError("Forbidden!", 403);
+				}
+				const res = await this.adapter.removeById(entity._id);
+				await this.entityChanged("removed", res, ctx);
+				return res;
+
+			}
+		},
 	},
 	methods: {
 		findBySlug(this: GalleriesThis, slug: string) {
-			return this.adapger.findOne({ slug });
+			return this.adapter.findOne({ slug });
 		},
 
 		async transformResult(
@@ -90,7 +274,7 @@ const GalleriesService: ServiceSchema<GalleriesSettings> & { methods: GalleriesM
 			user: IUser & { _id: string }
 		) {
 			if (Array.isArray(entities)) {
-				const galleries = await this.PromiseLike.all(entities.map(item => this.transformEntity(ctx, item, user)));
+				const galleries = await Promise.all(entities.map(item => this.transformEntity(ctx, item, user)));
 				return { galleries };
 			} else {
 				const gallery = await this.transformEntity(ctx, entities, user);
