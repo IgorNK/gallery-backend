@@ -132,10 +132,6 @@ const StoriesService: ServiceSchema<StoriesSettings> & { methods: StoriesMethods
 				this: StoriesThis,
 				ctx: Context<ActionUpdateParams, Meta>
 			) {
-				let newData = {
-					...ctx.params.story,
-					updatedAt: new Date(),
-				};
 				let story = await this.findBySlug(ctx.params.id);
 				if (!story) {
 					story = await this.adapter.findById(ctx.params.id);
@@ -146,6 +142,18 @@ const StoriesService: ServiceSchema<StoriesSettings> & { methods: StoriesMethods
 				if (story.author !== ctx.meta.user?._id) {
 					throw new ApiGateway.Errors.ForbiddenError("Forbidden", 403);
 				}
+
+				let newSlug = story.slug;
+				if (ctx.params.story.title) {
+					newSlug = slug(ctx.params.story.title, { lower: true}) + "-" + (Math.random() * Math.pow(36, 6) | 0).toString(36);
+				}
+				
+				let newData = {
+					...ctx.params.story,
+					slug: newSlug,
+					updatedAt: new Date(),
+				};
+
 
 				const update = {
 					"$set": newData

@@ -62,7 +62,7 @@ const GalleriesService: ServiceSchema<GalleriesSettings> & { methods: GalleriesM
 	name: 'galleries',
 	mixins: [DbService("galleries")],
 	settings: {
-		fields: ["_id", "cover", "title", "subtitle", "author", "stories", "createdAt", "updatedAt", "slug"],
+		fields: ["_id", "cover", "title", "subtitle", "author", "stories", "tagList", "createdAt", "updatedAt", "slug"],
 		populates: {
 			author: {
 				action: "users.get",
@@ -73,7 +73,7 @@ const GalleriesService: ServiceSchema<GalleriesSettings> & { methods: GalleriesM
 			stories: {
 				action: "stories.get",
 				params: {
-					fields: ["_id", "cover", "info", "title", "slug", "author"],
+					fields: ["_id", "cover", "info", "title", "slug", "tagList", "author"],
 					populate: ["author"]
 				}
 			}
@@ -233,9 +233,15 @@ const GalleriesService: ServiceSchema<GalleriesSettings> & { methods: GalleriesM
 				if (gallery.author !== ctx.meta.user?._id) {
 					throw new ApiGateway.Errors.ForbiddenError("Forbidden!", 403);
 				}
+				let newSlug = gallery.slug;
+				if (ctx.params.gallery.title) {
+					newSlug = slug(ctx.params.gallery.title, { lower: true}) + "-" + (Math.random() * Math.pow(36, 6) | 0).toString(36);
+				}
+
 				let newData: IGallery = {
 					...gallery,
 					...ctx.params.gallery,
+					slug: newSlug,
 					updatedAt: new Date(),
 				};
 				await this.validateEntity(newData);
