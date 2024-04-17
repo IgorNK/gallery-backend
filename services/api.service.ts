@@ -13,16 +13,10 @@ const ApiService: ServiceSchema<ApiSettingsSchema> = {
     ip: '0.0.0.0',
     cors: {
       origin: '*',
-      methods: ['POST', 'PUT', 'GET', 'PATCH'],
+      methods: ['POST', 'PUT', 'GET', 'PATCH', 'DELETE'],
       allowedHeaders: ['Content-Type']
     },
     routes: [
-      //{
-	//path: '/',
-	//authorization: true,
-	//authentication: true,
-	//autoAliases: true,
-      //},
       {
         path: '/upload',
 
@@ -76,6 +70,8 @@ const ApiService: ServiceSchema<ApiSettingsSchema> = {
 	aliases: {
 		'GET /': 'users.list',
 		'POST /': 'users.create',
+		'PATCH /:id': 'users.update',
+		'DELETE /:id': 'users.delete',
 		'GET /:id': 'users.get',
 		'POST /login': 'users.login',
 		'GET /me': 'users.me'

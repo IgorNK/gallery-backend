@@ -17,6 +17,25 @@ export interface ActionLoginParams {
 	password: string,
 }
 
+export interface ActionUpdateParams {
+	username?: string,
+	email?: string,
+	password?: string,
+	image?: string,
+	bio?: string,
+}
+
+export interface ActionGetParams {
+	id: string,
+}
+
+export interface ActionListParams {
+	id?: string | string[],
+	username?: string | string[],
+	limit?: number,
+	offset?: number,
+}
+
 export interface ActionResolveTokenParams {
 	token: string,
 }
@@ -27,6 +46,7 @@ interface UsersSettings extends ServiceSettingSchema {
 }
 
 interface UsersMethods {
+    findByName: (this: UsersThis, username: string) => IUser & { _id: string };
     generateJwt: (user: IUser & { _id: string }) => string;
     transformEntity: (user: IUser, withToken: boolean, token?: string | null | undefined) => { user: IUser | IUser & { token: string } };
 }
@@ -41,16 +61,18 @@ const UsersService: ServiceSchema<UsersSettings> & { methods: UsersMethods } = {
   mixins: [DbService("users")],
   settings: {
 	  JWT_SECRET: process.env.JWT_SECRET || "jwt-secret",
-	  fields: ["_id", "username", "email", "image", "bio", "createdAt"],
+	  fields: ["_id", "username", "email", "image", "bio", "createdAt", "updatedAt"],
 	  entityValidator: UserValidator,
   },
   actions: {
     create: {
       async handler (this: UsersThis, ctx: Context<ActionCreateParams, Meta>) {
 	await this.validateEntity(ctx.params);
+	const now = new Date();
 	let entity: IUser = {
 		...ctx.params,
-		createdAt: new Date(),
+		createdAt: now,
+		updatedAt: now,
 		password: bcrypt.hashSync(ctx.params.password, 10),
 		image: null,
 		bio: null,
@@ -74,6 +96,63 @@ const UsersService: ServiceSchema<UsersSettings> & { methods: UsersMethods } = {
 	await this.entityChanged("created", json, ctx);
 	return json;
       }
+    },
+    update: {
+    	auth: "required",
+	params: {
+		username: { type: "string", min: 3, optional: true },
+		email: { type: "email", min: 3, optional: true },
+		password: { type: "string", min: 3, optional: true },
+		image: { type: "string", min: 3, optional: true },
+		bio: { type: "string", min: 3, optional: true },
+	},
+	async handler(this: UsersThis, ctx: Context<ActionUpdateParams, Meta>) {
+		const id = ctx.meta.user?._id;
+		if (!id) {
+			throw new Errors.MoleculerClientError(
+				"You must be logged in!",
+				403
+			);
+		}
+		let newData = {
+			...ctx.params,
+			updatedAt: new Date(),
+		};
+		if (newData.password) {
+			newData.password = bcrypt.hashSync(newData.password, 10);
+		};
+		if (newData.username) {
+			const found = await this.adapter.findOne({ username: newData.username });
+			if (found && found._id !== id) {
+				throw new Errors.MoleculerClientError(
+					"Username already taken!", 
+					422, 
+					"", 
+					[{ field: "username", message: "already exists" }]
+				);
+			}
+		}
+		if (newData.email) {
+			const found = await this.adapter.findOne({ email: newData.email });
+			if (found && found._id !== id) {
+				throw new Errors.MoleculerClientError(
+					"Email already exists!", 
+					422, 
+					"", 
+					[{ field: "email", message: "already exists" }]
+				);
+			}
+		}
+		const update = {
+			"$set": newData
+		};
+
+		const doc = await this.adapter.updateById(id, update);
+		const user = await this.transformDocuments(ctx, {}, doc);
+		const json = await this.transformEntity(user, false);
+		await this.entityChanged("updated", json, ctx);
+		return json;
+	},
     },
 
     login: {
@@ -127,12 +206,107 @@ const UsersService: ServiceSchema<UsersSettings> & { methods: UsersMethods } = {
 		if (!user) {
 			throw new Errors.MoleculerClientError("User not found!", 400);
 		}
-		const doc = await this.transformDocuments(ctx, {}, user);
-		return await this.transformEntity(doc, true, ctx.meta.user?.token);
+		const doc = await this.transformDocuments(
+			ctx, 
+			{},
+			user
+		);
+		return doc;
 	}
-    }
+    },
+
+    get: {
+	    cache: {
+		    keys: ["userID", "id", "username"],
+	    },
+	    async handler(
+		    this: UsersThis,
+		    ctx: Context<ActionGetParams, Meta>
+	    ) {
+		    let id = ctx.params.id;
+		    const userByName = await this.findByName(id);
+		    if (userByName) {
+			    id = userByName._id;
+		    }
+		    let params = this.sanitizeParams(ctx, { ...ctx.params, id, excludeFields: ["email"] });
+		    return this._get(ctx, params);
+	    },
+    },
+
+    list: {
+    	cache: {
+		keys: ["#userID", "_id", "username", "limit", "offset"],
+	},
+	async handler(
+		this: UsersThis,
+		ctx: Context<ActionListParams, Meta>
+	) {
+		const limit: Number | null = ctx.params.limit ? Number(ctx.params.limit) : 20;
+		const offset: Number | null = ctx.params.offset ? Number(ctx.params.offset) : 0;
+		let params: {
+			limit: Number | null,
+			offset: Number | null,
+			sort: string[],
+			populate: string[],
+			excludeFields: string[],
+			query: {
+				_id?: Object,
+				username?: Object,
+			}
+		} = {
+			limit,
+			offset,
+			sort: ["-createdAt"],
+			populate: [],
+			excludeFields: ["email"],
+			query: {},
+		};
+		if (ctx.params.id) {
+			const id = Array.isArray(ctx.params.id) ? ctx.params.id : ctx.params.id.split(",");
+			params.query._id = { "$in": id };
+		}
+		if (ctx.params.username) {
+			const username = Array.isArray(ctx.params.username) ? ctx.params.username : ctx.params.username.split(",");
+			params.query.username = { "$in": username };
+		}
+		const countParams = {...params};
+		if (countParams && countParams.limit) {
+			countParams.limit = null;
+		}
+		if (countParams && countParams.offset) {
+			countParams.offset = null;
+		}
+
+		const res = await Promise.all([
+			this.adapter.find(params),
+			this.adapter.count(countParams)
+		]);
+		const docs = await this.transformDocuments(ctx, params, res[0]);
+		return { users: docs, usersCount: res[1] };
+	}
+    },
+    delete: {
+    	auth: "required",
+	async handler(
+		this: UsersThis,
+		ctx: Context<null, Meta>
+	) {
+		let id = await ctx.meta.user?._id;
+		if (!id) {
+			throw new Errors.MoleculerClientError("You must be logged in!", 403);
+		}
+		const res = await this.adapter.removeById(id);
+		await this.entityChanged("removed", res, ctx);
+		return res;
+	}
+    },
   },
+  
   methods: {
+    findByName(this: UsersThis, username: string) {
+	    return this.adapter.findOne({ username });
+    },
+
     generateJwt(user: IUser & { _id: string }) {
 	    const today = new Date();
 	    const exp = new Date(today);

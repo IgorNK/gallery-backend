@@ -31,8 +31,9 @@ export interface ActionUpdateParams {
 
 export interface ActionListParams {
 	id?: string | string[],
-	tag?: string,
-	author?: string,
+	title?: string | string[],
+	tag?: string | string[],
+	author?: string | string[],
 	limit?: number,
 	offset?: number,
 }
@@ -74,12 +75,10 @@ const StoriesService: ServiceSchema<StoriesSettings> & { methods: StoriesMethods
 	actions: {
 		create: {
 			auth: "required",
-			rest: "POST /",
 			async handler(
 				this: StoriesThis,
 				ctx: Context<ActionCreateParams, Meta>
 			) {
-				this.logger.info(ctx.meta);
 				const id = ctx.meta.user?._id;
 				if (!id) {
 					this.logger.info("couldn't find user id");
@@ -133,7 +132,6 @@ const StoriesService: ServiceSchema<StoriesSettings> & { methods: StoriesMethods
 				this: StoriesThis,
 				ctx: Context<ActionUpdateParams, Meta>
 			) {
-				await this.validateEntity(ctx.params.story);
 				let newData = {
 					...ctx.params.story,
 					updatedAt: new Date(),
@@ -185,57 +183,31 @@ const StoriesService: ServiceSchema<StoriesSettings> & { methods: StoriesMethods
 		},
 		get: {
 			cache: {
-				keys: ["#userID", "id"],
+				keys: ["#userID", "id", "slug"],
 			},
-			rest: "GET /:id",
 			populate: ["author"],
 			async handler(
 				this: StoriesThis,
 				ctx: Context<ActionGetParams, Meta>
 			) {
-				this.logger.info("STORIES PARAMS:");
-				this.logger.info(ctx.params);
-				if (Array.isArray(ctx.params.id)) {
-					return await this.adapter.findByIds(ctx.params.id);
-				} else {
-					return await this.adapter.findById(ctx.params.id);
+				let id = ctx.params.id;
+				const storyBySlug = await this.findBySlug(id);
+				if (storyBySlug) {
+					id = storyBySlug._id;
 				}
+				let params = this.sanitizeParams(ctx, { 
+					...ctx.params, 
+					id, 
+					populate: ["author"] 
+				});
+				return this._get(ctx, params);
+
+
 			},
-			//async handler(
-			//	this: StoriesThis,
-			//	ctx: Context<ActionGetParams, Meta>
-			//) {
-			//	this.logger.info(ctx.params.id);
-			//	let id: string[];
-			//	if (Array.isArray(ctx.params.id)) {
-			//		id = ctx.params.id;
-			//	} else {
-			//		id = [ctx.params.id]
-			//	}
-			//	
-			//	let doc: string | string[];
-			  //      doc = await Promise.all(id.map(async (id: string) => {
-			//		this.logger.info(id);
-			//		let res = await this.findBySlug(id);
-			//		if (!res) {
-			//			res = await this.adapter.findById(id);
-			//		}
-			//		if (!res) {
-			//			throw new Errors.MoleculerClientError(`Story ${id} not found!`, 404);
-			//		}
-			//		return res;
-			//	}));
-			//	if (doc.length < 2) {
-			//		doc = doc[0];
-			//	}
-//
-//				let json = await this.transformDocuments(ctx, { populate: ["author"] }, doc);
-//				return json;
-//			}
 		},
 		list: {
 			cache: {
-				keys: ["#userID", "_id", "tag", "author", "limit", "offset"],
+				keys: ["#userID", "_id", "title", "tag", "author", "limit", "offset"],
 			},
 			async handler(
 				this: StoriesThis,
@@ -251,8 +223,9 @@ const StoriesService: ServiceSchema<StoriesSettings> & { methods: StoriesMethods
 					populate: string[],
 					query: {
 						_id?: Object,
+						title?: Object,
 						tagList?: Object,
-						author?: string,
+						author?: Object,
 					}
 				} = {
 					limit,
@@ -264,23 +237,29 @@ const StoriesService: ServiceSchema<StoriesSettings> & { methods: StoriesMethods
 				
 				if (ctx.params.id) {
 					const id = Array.isArray(ctx.params.id) ? ctx.params.id : ctx.params.id.split(",");
-					params.query._id = { "$in": id};
+					params.query._id = { "$in": id };
+				}
+
+				if (ctx.params.title) {
+					const title = Array.isArray(ctx.params.title) ? ctx.params.title : ctx.params.title.split(",");
+					params.query.title = { "$in": title };
 				}
 
 				if (ctx.params.tag) {
-					params.query.tagList = { "$in" : [ctx.params.tag] };
+					const tag = Array.isArray(ctx.params.tag) ? ctx.params.tag : ctx.params.tag.split(",");
+					params.query.tagList = { "$in": tag };
 				}
 
 				if (ctx.params.author) {
+					const author = Array.isArray(ctx.params.author) ? ctx.params.author : ctx.params.author.split(",");
 					const users: Array<IUser & { _id: string }> = await ctx.call("users.find", {
-						query: { username: ctx.params.author }
+						query: { username: { "$in": author } }
 					});
 					if (users.length == 0) {
 						throw new Errors.MoleculerClientError("Author not found");
 					}
-					params.query.author = users[0]._id;
+					params.query.author = { "$in": users.map(u => u._id)  };
 				}
-
 
 				const countParams = {...params};
 				if (countParams && countParams.limit) {

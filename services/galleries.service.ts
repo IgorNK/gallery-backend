@@ -21,9 +21,11 @@ export interface ActionGetParams {
 }
 
 export interface ActionListParams {
-	tag?: string,
-	author?: string,
-	story?: string,
+	id?: string | string[],
+	title?: string | string[],
+	tag?: string | string[],
+	author?: string | string[],
+	story?: string | string[],
 	limit?: number,
 	offset?: number,
 }
@@ -117,26 +119,22 @@ const GalleriesService: ServiceSchema<GalleriesSettings> & { methods: GalleriesM
 				this: GalleriesThis,
 				ctx: Context<ActionGetParams, Meta>
 			) {
+				let id = ctx.params.id;
 				let doc = await this.findBySlug(ctx.params.id);
-				if (!doc) {
-					doc = await this.adapter.findById(ctx.params.id);
+				if (doc) {
+					id = doc._id;
 				}
-				if (!doc) {
-					throw new Errors.MoleculerClientError("Gallery not found!", 404);
-				}
-				if (doc.stories.length) {
-					const res = await this.broker.call("stories.get", { id: doc.stories[0] });
-					this.logger.info("RESPONSE:");
-					this.logger.info(res);
-
-				}
-				let json = await this.transformDocuments(ctx, { populate: ["author", "stories"] }, doc);
-				return json;
+				let params = this.sanitizeParams(ctx, {
+					...ctx.params,
+					id,
+					populate: ["author", "stories"]
+				});
+				return this._get(ctx, params);
 			}
 		},
 		list: {
 			cache: {
-				keys: ["#userID", "tag", "author", "story", "limit", "offset"]
+				keys: ["#userID", "tag", "author", "_id", "title", "stories", "limit", "offset"]
 			},
 			async handler(
 				this: GalleriesThis,
@@ -151,9 +149,11 @@ const GalleriesService: ServiceSchema<GalleriesSettings> & { methods: GalleriesM
 					sort: string[],
 					populate: string[],
 					query: {
+						_id?: Object,
 						tagList?: Object,
-						author?: string,
-						story?: string,
+						title?: Object,
+						author?: Object,
+						stories?: Object,
 					}
 				} = {
 					limit,
@@ -163,27 +163,40 @@ const GalleriesService: ServiceSchema<GalleriesSettings> & { methods: GalleriesM
 					query: {}
 				};
 
+				if (ctx.params.id) {
+					const id = Array.isArray(ctx.params.id) ? ctx.params.id : ctx.params.id.split(",");
+					params.query._id = { "$in": id };
+				}
+
+				if (ctx.params.title) {
+					const title = Array.isArray(ctx.params.title) ? ctx.params.title : ctx.params.title.split(",");
+					params.query.title = { "$in": title };
+				}
+
 				if (ctx.params.tag) {
-					params.query.tagList = { "$in": [ctx.params.tag] };
+					const tag = Array.isArray(ctx.params.tag) ? ctx.params.tag : ctx.params.tag.split(",");
+					params.query.tagList = { "$in": tag };
 				}
 
 				if (ctx.params.author) {
+					const author = Array.isArray(ctx.params.author) ? ctx.params.author : ctx.params.author.split(",");
 					const users: Array<IUser & { _id: string }> = await ctx.call("users.find", {
-						query: { username: ctx.params.author }
+						query: { username: { "$in": author } }
 					});
 					if (users.length == 0) {
 						throw new Errors.MoleculerClientError("Author not found");
 					}
-					params.query.author = users[0]._id;
+					params.query.author = { "$in": users.map(u => u._id) };
 				}
 				if (ctx.params.story) {
+					const story = Array.isArray(ctx.params.story) ? ctx.params.story : ctx.params.story.split(",");
 					const stories: Array<IStory & { _id: string }> = await ctx.call("stories.find", {
-						query: { title: ctx.params.story }
+						query: { title: { "$in": story } }
 					});
 					if (stories.length == 0) {
 						throw new Errors.MoleculerClientError("Story not found");
 					}
-					params.query.story = stories[0]._id;
+					params.query.stories = { "$in": stories.map(s => s._id) };
 				}
 				const countParams = {...params};
 				if (countParams && countParams.limit) {
@@ -200,7 +213,7 @@ const GalleriesService: ServiceSchema<GalleriesSettings> & { methods: GalleriesM
 
 				const docs = await this.transformDocuments(ctx, params, res[0]);
 				const r = await this.transformResult(ctx, docs, ctx.meta.user);
-				r.articlesCount = res[1];
+				r.galleriesCount = res[1];
 				return r;
 			}
 		},

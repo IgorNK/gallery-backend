@@ -5,6 +5,7 @@ export interface IUser {
 	image?: string | undefined | null;
 	bio?: string | undefined | null;
 	createdAt: Date;
+	updatedAt: Date;
 };
 
 export const UserValidator = {
